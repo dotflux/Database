@@ -7,5 +7,7 @@ void input_table(const char* table_name, char** tokens, int token_count);
 void select_table(const char* table_name,const WhereClause* where);
 void update_table(const char* table_name, const WhereClause* where, const UpdatePair* updates, int update_count);
 void delete_table(const char* table_name,const WhereClause* where);
+void insert_table(const char* table_name,char** tokens, int token_count);
+void drop_a_table(const char* table_name);
 
 #endif

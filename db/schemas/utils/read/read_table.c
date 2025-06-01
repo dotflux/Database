@@ -119,7 +119,7 @@ void read_table(const char* table_name, const WhereClause* where) {
     clock_t end = clock();
     double t = (double)(end - start)/CLOCKS_PER_SEC;
     printf("[Query executed in %.6f seconds]\n", t);
-    printf("Matched count: %d",matched_count);
+    printf("Matched count: %d\n",matched_count);
 
     fclose(fp);
 }

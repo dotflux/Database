@@ -6,6 +6,8 @@
 #include "commands/select/select.h"
 #include "commands/update/update.h"
 #include "commands/delete/delete.h"
+#include "commands/insert/insert.h"
+#include "commands/drop/drop.h"
 
 #define INPUT_BUFFER_SIZE 1024
 #define MAX_TOKENS 64
@@ -69,6 +71,18 @@ int main(){
                 printf("Syntax error: delete <tableName> (<whereClause>)\n");
             }
             handle_delete(tokens);
+        }
+        if (strcmp(tokens[0], "insert") == 0) {
+            if (token_count <= 1) {
+                printf("Syntax error: insert <tableName> (columnName:dataType)\n");
+            }
+            handle_insert(tokens);
+        }
+        if (strcmp(tokens[0], "drop") == 0) {
+            if (token_count <= 1) {
+                printf("Syntax error: drop <tableName>\n");
+            }
+            handle_drop(tokens);
         }
     };
 

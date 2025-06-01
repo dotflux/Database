@@ -9,6 +9,8 @@
 #include "utils/read/read_table.h"
 #include "utils/update/update_data.h"
 #include "utils/delete/delete_data.h"
+#include "utils/insert/insert_columns.h"
+#include "utils/drop/drop_table.h"
 
 
 void create_table(const char* table_name, char** tokens, int token_count){
@@ -29,4 +31,12 @@ void update_table(const char* table_name, const WhereClause* where, const Update
 
 void delete_table(const char* table_name,const WhereClause* where){
     delete_data(table_name,where);
+}
+
+void insert_table(const char* table_name,char** tokens, int token_count){
+    insert_to_schema(table_name,tokens,token_count);
+}
+
+void drop_a_table(const char* table_name){
+    drop_table(table_name);
 }
