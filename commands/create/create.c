@@ -19,5 +19,5 @@ void handle_create(char** tokens){
     count++;
     }
 
-    write_to_schema(table_name,tokens,count);
+    create_table(table_name,tokens,count);
 }

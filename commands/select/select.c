@@ -59,7 +59,7 @@ void handle_select(char** tokens) {
 
     // 2) if no tokens[2], no conditions
     if (!tokens[2]) {
-        read_table(table_name, NULL);
+        select_table(table_name, NULL);
         return;
     }
 
@@ -72,6 +72,6 @@ void handle_select(char** tokens) {
     WhereClause where;
     parse_conditions(tokens, 2, end, &where);
 
-    // 5) call read_table with the built WhereClause
-    read_table(table_name, &where);
+    // 5) call select_table with the built WhereClause
+    select_table(table_name, &where);
 }

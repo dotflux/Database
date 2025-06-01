@@ -30,5 +30,10 @@ typedef struct {
     int count;
 } WhereClause;
 
+typedef struct {
+    char column[MAX_NAME_LEN];
+    char value[MAX_VALUE_LEN];
+} UpdatePair;
+
 
 #endif

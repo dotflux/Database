@@ -96,38 +96,82 @@ void build_indexes(FILE* fp, const TableSchema* schema, const WhereClause* where
 }
 
 // Filter rows based on WHERE clause using index_map, output matching row numbers in final_rows
-void filter_rows(IndexMap* index_map, const WhereClause* where, int* final_rows, int* final_count) {
-    int temp1[1024], temp2[1024];
+void filter_rows(IndexMap* index_map,
+                 const WhereClause* where,
+                 int* final_rows,
+                 int* final_count,
+                 int  total_rows)
+{
+    int *temp1 = malloc(sizeof *temp1 * total_rows);
+    int *temp2 = malloc(sizeof *temp2 * total_rows);
     int count1 = 0, count2 = 0;
 
-    if (where->count == 0) {
-        *final_count = 0;
-        return;
+    *final_count = 0;
+    if (where->count == 0) goto CLEANUP;
+
+    // Detect single‐column range: col>low AND col<high (or <= variants)
+    if (where->count == 2
+     && where->logic_ops[0] == 'A'
+     && strcmp(where->conditions[0].column,
+               where->conditions[1].column) == 0)
+    {
+        // both numeric?
+        if (is_number(where->conditions[0].value)
+         && is_number(where->conditions[1].value))
+        {
+            int low_val  = atoi(where->conditions[0].value);
+            int high_val = atoi(where->conditions[1].value);
+            bool low_incl  = (strcmp(where->conditions[0].op, ">=") == 0);
+            bool high_incl = (strcmp(where->conditions[1].op, "<=") == 0);
+
+            BPlusNode* tree = get_tree(index_map,
+                                       where->conditions[0].column);
+            if (tree) {
+                bpt_search_range(tree,
+                                 low_val,  low_incl,
+                                 high_val, high_incl,
+                                 final_rows,
+                                 final_count);
+            }
+            goto CLEANUP;
+        }
     }
 
+    // Fallback to original multi‐condition logic:
     for (int i = 0; i < where->count; i++) {
         Condition cond = where->conditions[i];
         BPlusNode* tree = get_tree(index_map, cond.column);
-        if (!tree) {
-            // No index for column, so no matches
-            *final_count = 0;
-            return;
+        if (!tree) goto CLEANUP;
+
+        bool val_is_num = is_number(cond.value);
+        if (val_is_num) {
+            int v = atoi(cond.value);
+            bpt_search_int(tree, cond.op, v,
+                           (i==0 ? temp1 : temp2),
+                           (i==0 ? &count1: &count2));
+        } else {
+            bpt_search(tree, cond.op, cond.value,
+                       (i==0 ? temp1 : temp2),
+                       (i==0 ? &count1: &count2));
         }
 
-        // Search rows matching this condition in B+ tree
-        bpt_search(tree, cond.op, cond.value, (i == 0 ? temp1 : temp2), (i == 0 ? &count1 : &count2));
-
-        if (i == 0) continue;
-
-        if (where->logic_ops[i - 1] == 'A') { // AND
-            intersect(temp1, count1, temp2, count2, temp1, &count1);
-        } else if (where->logic_ops[i - 1] == 'O') { // OR
-            unite(temp1, count1, temp2, count2, temp1, &count1);
+        if (i > 0) {
+            if (where->logic_ops[i - 1] == 'A')
+                intersect(temp1, count1, temp2, count2, temp1, &count1);
+            else
+                unite   (temp1, count1, temp2, count2, temp1, &count1);
         }
     }
 
-    memcpy(final_rows, temp1, sizeof(int) * count1);
-    *final_count = count1;
+    // copy result of first condition
+    if (where->count >= 1) {
+        memcpy(final_rows, temp1, sizeof(int) * count1);
+        *final_count = count1;
+    }
+
+CLEANUP:
+    free(temp1);
+    free(temp2);
 }
 
 // Create a new B+ tree node (leaf or internal)
@@ -252,31 +296,34 @@ void bpt_insert(BPlusNode** root_ptr, const char* key, int row_num) {
 }
 
 // Binary search for keys matching condition in leaf nodes and collect matching row nums
-void bpt_search(BPlusNode* root, const char* op, const char* val, int* out, int* out_count) {
+void bpt_search_int(BPlusNode* root,
+                    const char* op,
+                    int          val,
+                    int*         out,
+                    int*         out_count)
+{
     *out_count = 0;
     if (!root) return;
 
-    // 1) Descend to the first leaf
+    // 1) descend to leftmost leaf (we need full scan for <, <=, !=)
     BPlusNode* node = root;
     while (!node->is_leaf) {
-        int i = 0;
-        // find the child pointer to follow
-        while (i < node->key_count && key_compare(val, node->keys[i]) >= 0) i++;
-        node = node->children[i];
+        node = node->children[0];
     }
 
-    // 2) Now scan through the leaf chain
+    // 2) scan through entire leaf chain
     for (; node; node = node->next) {
         for (int i = 0; i < node->key_count; i++) {
-            int cmp = key_compare(node->keys[i], val);
+            // try numeric compare
+            int key_int = atoi(node->keys[i]);
             bool match = false;
 
-            if      (strcmp(op, "=")  == 0) match = (cmp == 0);
-            else if (strcmp(op, "!=") == 0) match = (cmp != 0);
-            else if (strcmp(op, "<")  == 0) match = (cmp <  0);
-            else if (strcmp(op, "<=") == 0) match = (cmp <= 0);
-            else if (strcmp(op, ">")  == 0) match = (cmp >  0);
-            else if (strcmp(op, ">=") == 0) match = (cmp >= 0);
+            if      (strcmp(op, "=")  == 0) match = (key_int == val);
+            else if (strcmp(op, "!=") == 0) match = (key_int != val);
+            else if (strcmp(op, "<")  == 0) match = (key_int <  val);
+            else if (strcmp(op, "<=") == 0) match = (key_int <= val);
+            else if (strcmp(op, ">")  == 0) match = (key_int >  val);
+            else if (strcmp(op, ">=") == 0) match = (key_int >= val);
 
             if (match) {
                 out[(*out_count)++] = node->values[i];
@@ -284,6 +331,105 @@ void bpt_search(BPlusNode* root, const char* op, const char* val, int* out, int*
         }
     }
 }
+
+void bpt_search_range(BPlusNode* root,
+                      int        low,      bool low_incl,
+                      int        high,     bool high_incl,
+                      int*       out,
+                      int*       out_count)
+{
+    *out_count = 0;
+    if (!root) return;
+
+    // 1) descend to the first leaf ≥ low if possible,
+    //    otherwise to leftmost leaf
+    BPlusNode* node = root;
+    while (!node->is_leaf) {
+        int i = 0;
+        // find first key >= low
+        while (i < node->key_count && atoi(node->keys[i]) < low) i++;
+        node = node->children[i];
+    }
+
+    // 2) scan until we exceed high
+    while (node) {
+        for (int i = 0; i < node->key_count; i++) {
+            int key_int = atoi(node->keys[i]);
+            if (key_int < low || (key_int == low && !low_incl)) {
+                continue;
+            }
+            if (key_int > high || (key_int == high && !high_incl)) {
+                return;
+            }
+            // within range
+            out[(*out_count)++] = node->values[i];
+        }
+        node = node->next;
+    }
+}
+
+void bpt_search(BPlusNode* root,
+                const char* op,
+                const char* val,
+                int*        out,
+                int*        out_count)
+{
+    *out_count = 0;
+    if (!root) return;
+
+    // Pre-parse val as integer if it looks numeric
+    bool val_is_num = is_number(val);
+    int  val_int    = val_is_num ? atoi(val) : 0;
+
+    // Decide where to start scanning
+    bool scan_from_left = (strcmp(op, "<") == 0)
+                       || (strcmp(op, "<=") == 0)
+                       || (strcmp(op, "!=") == 0);
+
+    // 1) find starting leaf
+    BPlusNode* node = root;
+    if (scan_from_left) {
+        while (!node->is_leaf) node = node->children[0];
+    } else {
+        while (!node->is_leaf) {
+            int i = 0;
+            while (i < node->key_count && key_compare(val, node->keys[i]) >= 0) i++;
+            node = node->children[i];
+        }
+    }
+
+    // 2) scan leaves
+    for (; node; node = node->next) {
+        for (int i = 0; i < node->key_count; i++) {
+            // compare either numerically or by key_compare
+            bool match = false;
+            if (val_is_num && is_number(node->keys[i])) {
+                int key_int = atoi(node->keys[i]);
+                if      (strcmp(op, "=")  == 0) match = (key_int == val_int);
+                else if (strcmp(op, "!=") == 0) match = (key_int != val_int);
+                else if (strcmp(op, "<")  == 0) match = (key_int <  val_int);
+                else if (strcmp(op, "<=") == 0) match = (key_int <= val_int);
+                else if (strcmp(op, ">")  == 0) match = (key_int >  val_int);
+                else if (strcmp(op, ">=") == 0) match = (key_int >= val_int);
+            } else {
+                // fallback to string comparison
+                int cmp = key_compare(node->keys[i], val);
+                if      (strcmp(op, "=")  == 0) match = (cmp == 0);
+                else if (strcmp(op, "!=") == 0) match = (cmp != 0);
+                else if (strcmp(op, "<")  == 0) match = (cmp <  0);
+                else if (strcmp(op, "<=") == 0) match = (cmp <= 0);
+                else if (strcmp(op, ">")  == 0) match = (cmp >  0);
+                else if (strcmp(op, ">=") == 0) match = (cmp >= 0);
+            }
+
+            if (match) {
+                out[(*out_count)++] = node->values[i];
+            }
+        }
+    }
+}
+
+
 
 
 // Free B+ tree nodes recursively
